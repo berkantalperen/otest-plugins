@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sinyal Üretici (Web) — Hız ve Konumlu</title>
+
+  <link rel="stylesheet" href="styles.css" />
+
+</head>
+<body>
+  <header>
+    <h1>Sinyal Üretici (Web) — İvme, Hız ve Konum</h1>
+  </header>
+
+  <div class="container">
+    <!-- Sol Panel: Girişler -->
+    <section class="panel">
+      <h2>Girdi</h2>
+
+      <!-- Collapsible table -->
+      <details open>
+        <summary style="cursor:pointer; font-weight:bold; margin-bottom:6px;">
+          Zaman–İvme Çiftleri (t, a)
+        </summary>
+
+        <div class="table-tools">
+          <button class="btn btn-sm" id="btnAddRow">Satır Ekle</button>
+          <button class="btn btn-sm" id="btnClearRows">Satırları Temizle</button>
+        </div>
+        <div class="table-wrap">
+          <table id="pairsTable" aria-label="Zaman ve İvme Tablosu">
+            <thead>
+              <tr>
+                <th>Zaman t (s)</th>
+                <th>İvme a (g)</th>
+                <th class="col-actions">—</th>
+              </tr>
+            </thead>
+            <tbody id="pairsBody"></tbody>
+          </table>
+        </div>
+        <p class="hint">
+          Not: Zamanlar sıkı artan olmalı (t₀ &lt; t₁ &lt; … &lt; tₙ). Virgül veya nokta yazabilirsiniz.
+        </p>
+      </details>
+
+      <div class="row3" style="margin-top:10px;">
+        <div>
+          <label for="dtInput">Δt (s)</label>
+          <input id="dtInput" type="number" step="any" value="0.00015" />
+        </div>
+        <div>
+          <label for="shapeSel">Interpolasyon</label>
+          <select id="shapeSel">
+            <option value="linear" selected>linear</option>
+            <option value="step">step</option>
+          </select>
+        </div>
+        <div>
+          <label for="unitSel">İvme Görünüm Birimi</label>
+          <select id="unitSel">
+            <option value="g" selected>g</option>
+            <option value="mps2">m/s²</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <button class="btn btn-primary" id="btnBuild">Grafikleri Oluştur</button>
+        <button class="btn" id="btnExample">Örnek Doldur</button>
+        <button class="btn" id="btnClear">Temizle</button>
+        <span style="flex:1 1 auto"></span>
+        <button class="btn" id="btnTXT">TXT İndir</button>
+        <button class="btn" id="btnPNG_acc">PNG (İvme)</button>
+        <button class="btn" id="btnPNG_vel">PNG (Hız)</button>
+        <button class="btn" id="btnPNG_pos">PNG (Konum)</button>
+      </div>
+
+      <div class="stats" id="stats"></div>
+      <div class="sep"></div>
+      <div class="stats" id="selStats"></div>
+
+      <p style="font-size:12px;color:#94a3b8;">
+        Not: TXT çıktısı sütunları: <b>time_s</b>, <b>accel_g/mps2</b>, <b>vel_mps</b>, <b>pos_m</b>.<br/>
+        Zaman <b>%.5f</b>, ivme <b>%.3f</b>, hız/konum <b>%.5f</b>. Ondalık ayırıcı <b>.</b>.<br/>
+        Başlangıç koşulları: <b>v(0)=0 m/s</b>, <b>x(0)=0 m</b>.
+      </p>
+    </section>
+
+    <!-- Sağ Panel: Grafikler -->
+    <section class="panel">
+      <div class="charts">
+        <div class="chart-box">
+          <h2>İvme</h2>
+          <canvas id="chartAcc"></canvas>
+        </div>
+        <div class="chart-box">
+          <h2>Hız</h2>
+          <canvas id="chartVel"></canvas>
+        </div>
+        <div class="chart-box">
+          <h2>Konum</h2>
+          <canvas id="chartPos"></canvas>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- App entry -->
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

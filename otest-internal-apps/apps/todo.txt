@@ -1,0 +1,9 @@
+Rename parser.js
+Refactor stats and such controls
+Add pass state to NIJ
+---------- Done -----------
+Move yükle&çiz down
+Remove label from lever arm
+Rename nij_main.js
+Colorize NIJ stats
+Add different standards to NIJ

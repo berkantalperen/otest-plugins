@@ -1,0 +1,293 @@
+:root {
+    --bg: #0b1020;
+    --panel: #11182e;
+    --muted: #94a3b8;
+    --text: #e5e7eb;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial;
+    background: var(--bg);
+    color: var(--text);
+}
+
+header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #1f2a44;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+}
+
+header h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: .2px;
+}
+
+.container {
+    display: grid;
+    grid-template-columns: 480px 1fr;
+    gap: 16px;
+    padding: 16px;
+    height: calc(100% - 65px);
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid #1f2a44;
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+    overflow: auto;
+}
+
+.panel h2 {
+    margin: 0 0 10px 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .6px;
+}
+
+label {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 6px;
+}
+
+input[type="file"],
+input[type="number"],
+button {
+    width: 100%;
+    padding: 10px 10px;
+    border-radius: 10px;
+    border: 1px solid #2a3558;
+    background: #0e1427;
+    color: var(--text);
+    outline: none;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.row3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    align-items: start;
+}
+
+.btn {
+    background: #101935;
+    border: 1px solid #283257;
+    cursor: pointer;
+    transition: transform .05s ease, background .2s ease;
+}
+
+.btn:hover {
+    background: #132044;
+}
+
+.btn:active {
+    transform: translateY(1px);
+}
+
+.btn-primary {
+    background: #193057;
+    border-color: #24457e;
+}
+
+.btn-inline {
+    width: auto;
+    padding: 8px 10px;
+    border-radius: 8px;
+}
+
+.pill {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #0f1b36;
+    border: 1px solid #2a3c6a;
+    margin-right: 6px;
+    font-size: 12px;
+}
+
+.sep {
+    height: 1px;
+    background: #1f2a44;
+    margin: 12px 0;
+    border: 0;
+}
+
+.stats {
+    margin-top: 10px;
+    font-size: 13px;
+    color: #a5b4fc;
+    display: grid;
+    gap: 6px;
+}
+
+.badge {
+    display: inline-block;
+    background: #0f1b36;
+    border: 1px solid #2a3c6a;
+    color: #c7d2fe;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+}
+
+.muted {
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.charts {
+    display: grid;
+    grid-template-rows: auto auto;
+    gap: 14px;
+}
+
+.chart-box {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+    height: 100%;
+}
+
+.chart-box canvas {
+    width: 100% !important;
+    height: 650px !important;
+}
+
+details.meta {
+    background: #0e1427;
+    border: 1px solid #1f2a44;
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+details.meta>summary {
+    cursor: pointer;
+    color: #cbd5e1;
+    font-weight: 600;
+}
+
+.meta-wrap {
+    align-self: flex-end;
+    overflow: auto;
+    margin-top: 10px;
+}
+
+table.meta {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+table.meta thead th {
+    position: sticky;
+    top: 0;
+    background: #0f1831;
+    border-bottom: 1px solid #243152;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 12px;
+    color: #cbd5e1;
+}
+
+table.meta tbody td {
+    border-top: 1px solid #1f294a;
+    padding: 6px 8px;
+    font-size: 12px;
+    color: #e5e7eb;
+}
+
+table.meta tbody tr:hover {
+    background: #0f1831;
+}
+
+.bad {
+    color: #fca5a5;
+}
+
+.result {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-weight: 600;
+}
+
+.pass {
+    background: #052e1c;
+    border: 1px solid #166534;
+    color: #bbf7d0;
+}
+
+.fail {
+    background: #3b0a0a;
+    border: 1px solid #7f1d1d;
+    color: #fecaca;
+}
+
+/* Combobox (select) styling */
+/* Combobox (select) styling — coherent with inputs/buttons */
+select.combo {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+
+    width: 100%;
+    padding: 10px 36px 10px 12px;
+    /* room for arrow */
+    border: 1px solid #2a3558;
+    /* same as inputs */
+    border-radius: 10px;
+    background: #0e1427;
+    /* same as inputs */
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.2;
+    cursor: pointer;
+}
+
+select.combo:hover {
+    background: #111a31;
+    /* subtle hover like .btn */
+    border-color: #2d3a60;
+}
+
+select.combo:focus {
+    outline: none;
+    border-color: #2d3a60;
+    /* subtle focus (no glow) */
+}
+
+/* Minimal arrow to match the muted theme */
+select.combo {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 12px 8px;
+}
+
+/* Dropdown list colors (for browsers that honor it) */
+select.combo option {
+    background: #0e1427;
+    color: var(--text);
+}

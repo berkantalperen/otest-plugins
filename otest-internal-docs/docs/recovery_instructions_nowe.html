@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>PostgreSQL Backup &amp; Recovery Playbook (QNAP / Docker / WAL / HBS3)</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #222;
+    background-color: #f8f8f8;
+    margin: 40px;
+  }
+
+  h1, h2, h3 {
+    color: #003366;
+  }
+
+  h1 {
+    border-bottom: 2px solid #003366;
+    padding-bottom: 5px;
+  }
+
+  h2 {
+    margin-top: 30px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4px;
+  }
+
+  pre {
+    background-color: #eee;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+
+  ul, ol {
+    margin-left: 25px;
+  }
+
+  li {
+    margin-bottom: 5px;
+  }
+
+  p {
+    margin: 12px 0;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid #ccc;
+    margin: 30px 0;
+  }
+
+  code {
+    background-color: #f2f2f2;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  b {
+    color: #000;
+  }
+</style></head>
+<body>
+<h1>PostgreSQL Backup &amp; Recovery Playbook</h1>
+<p>
+Environment: QNAP NAS (QTS 5.2.x, ARM64, Docker/Container Station), single Postgres container (postgres:18).<br/>
+Goal: Survive disk corruption or container failure, keep point-in-time recovery, and have automatic nightly consistent backups without manual intervention.
+</p>
+<hr/>
+<h2>1. Directory Layout and What Lives Where</h2>
+<p>All important data and scripts live under this main directory on the NAS filesystem:</p>
+<pre>/share/CACHEDEV1_DATA/DockerData/</pre>
+<p>Inside that, this setup has:</p>
+<ul>
+<li><b>postgres18/</b><br/>
+    This is (or is bind-mounted into) the live Postgres data directory.<br/>
+    The container is told to use:
+    <pre>/var/lib/postgresql/18/docker</pre>
+    and that path is backed by:
+    <pre>/share/CACHEDEV1_DATA/DockerData/postgres18</pre>
+    This is where Postgres stores its actual data files (tables, indexes, catalogs, etc.). If this gets corrupted, Postgres won't start or data will be broken.
+  </li>
+<li><b>postgres_archive/</b><br/>
+    This is where archived WAL (Write-Ahead Log) segments are copied.<br/>
+    In the container, Postgres runs with:
+    <pre>
+archive_mode = on
+archive_command = 'test ! -f /var/lib/postgresql/archive/%f &amp;&amp; cp %p /var/lib/postgresql/archive/%f'
+wal_compression = on
+    </pre>
+    and this setup has mounted:
+    <pre>/share/CACHEDEV1_DATA/DockerData/postgres_archive -&gt; /var/lib/postgresql/archive</pre>
+    Every time a WAL segment (16 MB file) completes, Postgres copies it into this archive directory. These WAL files allow Point-In-Time Recovery (PITR), meaning it is possible to restore the database not only to the last snapshot but to any moment before corruption, as long as it is still have the WAL segments.
+  </li>
+<li><b>postgres_backups/</b><br/>
+    Placeholder directory for future manual full base backups (optional). This setup prepared it for the idea of doing full pg_basebackup style dumps. It's not the main mechanism right now, but it exists as a place to store ad-hoc base copies if this setup ever take them.
+  </li>
+<li><b>postgres_compose/</b><br/>
+    This directory holds the Docker Compose configuration this setup actually use to run Postgres in a named container. For example, it contains:
+    <pre>docker-compose.yml</pre>
+    The service is named "postgres" and this setup explicitly set:
+    <pre>
+    container_name: postgresContainer
+    image: postgres:18
+    ports:
+      - "32786:5432"
+    environment:
+      POSTGRES_PASSWORD=...
+      PGDATA=/var/lib/postgresql/18/docker
+    volumes:
+      - /share/CACHEDEV1_DATA/DockerData/postgres18:/var/lib/postgresql/18/docker
+      - /share/CACHEDEV1_DATA/DockerData/postgres_archive:/var/lib/postgresql/archive
+    restart: unless-stopped
+    healthcheck: pg_isready
+    </pre>
+
+    Important:
+    <ul>
+<li>The container is not using anonymous, throwaway Docker-managed storage for important data. This setup bind-mount to real NAS paths. So data is on the NAS volume, not trapped inside Docker internals.</li>
+<li>This setup expose Postgres on port 32786 to the host.</li>
+<li>This setup pin PGDATA to the "18/docker" subdir, which matches the customized Postgres 18 image config.</li>
+<li>This setup mount "postgres_archive" into the container so archiving can write WAL segments there.</li>
+</ul>
+</li>
+<li><b>backup.log</b><br/>
+    A log file this setup write to when this setup stop/start the stack around backups. This gives an audit trail of when Postgres was taken down and brought back up.
+  </li>
+<li><b>restore_cron.log</b><br/>
+    A log file written by restore_cron.sh at boot. This lets us verify that cron jobs for nightly backup flow were restored after reboot or firmware updates.
+  </li>
+<li><b>pg_down.sh</b><br/>
+    Script that stops the Postgres container stack cleanly before backup.
+    It basically runs:
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml down
+    </pre>
+    and logs a timestamp to backup.log.
+  </li>
+<li><b>pg_up.sh</b><br/>
+    Script that starts the Postgres container stack again after backup.
+    It runs:
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml up -d
+    </pre>
+    and logs the timestamp to backup.log.
+  </li>
+<li><b>restore_cron.sh</b><br/>
+    A script that runs at boot and makes sure the cron jobs (the scheduled stop/start times) exist. If not, it re-adds them and restarts cron.
+    It also logs its actions and timestamps into restore_cron.log.
+  </li>
+</ul>
+<p>Outside DockerData but still important:</p>
+<ul>
+<li><b>/mnt/HDA_ROOT/.config/autorun.sh</b><br/>
+    This file lives in QNAP's persistent system config area. QNAP executes this script automatically at boot.
+    This setup added a very small autorun.sh with:
+    <pre>
+#!/bin/bash
+/share/CACHEDEV1_DATA/DockerData/restore_cron.sh &gt;&gt; /share/CACHEDEV1_DATA/DockerData/restore_cron.log 2&gt;&amp;1
+    </pre>
+    Meaning: on every boot, QNAP will call restore_cron.sh, which guarantees that the cron entries exist even if a firmware update or reboot wiped them.
+  </li>
+</ul>
+<hr/>
+<h2>2. How the Container Is Run (Runtime Layout)</h2>
+<p>This system is running Postgres 18 in Docker via a compose file. The container is called:</p>
+<pre>postgresContainer</pre>
+<p>Key details of the container runtime:</p>
+<ul>
+<li>Image: postgres:18 (ARM-compatible build since the system is on aarch64).</li>
+<li>POSTGRES_PASSWORD is provided via environment variable at container start.</li>
+<li>PGDATA is set to <code>/var/lib/postgresql/18/docker</code> inside container, and that path is mounted to <code>/share/CACHEDEV1_DATA/DockerData/postgres18</code> on the NAS. So your database cluster files live in DockerData/postgres18, not in an ephemeral container layer.</li>
+<li>WAL archive directory is mounted from DockerData/postgres_archive into the container at <code>/var/lib/postgresql/archive</code>.</li>
+<li>healthcheck: pg_isready is used so docker knows when Postgres is accepting connections.</li>
+<li>restart: unless-stopped so the container comes back unless this setup intentionally shut it down.</li>
+</ul>
+<p>Networking:</p>
+<ul>
+<li>The container maps 5432/tcp → host port 32786. So clients connect to the NAS on port 32786.</li>
+<li>The compose file also manages a small docker network that the container sits in. This setup confirmed with <code>docker inspect</code> that Postgres was reachable at 172.29.0.x internally, but from the outside this setup just use port 32786.</li>
+</ul>
+<hr/>
+<h2>3. How This setup Built the Backup System</h2>
+<p>The backup system is designed to do two things:</p>
+<ol>
+<li>Give us daily full-file snapshots of everything critical (data directory, WAL archive, docker-compose config, scripts) using HBS3 with versioning.</li>
+<li>Give us PITR (Point-In-Time Recovery) using WAL archiving.</li>
+</ol>
+<h3>3.1 Nightly backup flow (high-level)</h3>
+<ol>
+<li>At 03:00 every day: stop Postgres cleanly (via cron calling pg_down.sh). This makes sure no files are being actively modified while this setup copy them.</li>
+<li>At 03:05 every day: HBS3 job ("DockerDataSync") runs. It copies the entire <code>/share/CACHEDEV1_DATA/DockerData</code> directory to a backup location <code>/share/CACHEDEV1_DATA/DockerDataBackups/.../</code> and keeps versioned history (so it is possible to go back in time to previous days).</li>
+<li>At 04:00 every day: start Postgres again (via cron calling pg_up.sh).</li>
+</ol>
+<p>So each night, this provides a crash-consistent snapshot because the database was shut down before sync.</p>
+<h3>3.2 HBS3 job details</h3>
+<ul>
+<li>The HBS3 job is a one-way sync (NAS → NAS folder). Source: <code>/share/CACHEDEV1_DATA/DockerData</code>. Destination: <code>/share/CACHEDEV1_DATA/DockerDataBackups/&lt;JobName&gt;</code>.</li>
+<li>This setup enabled versioning ("sürüm yönetimi") so each run can store historical versions rather than just overwriting the last copy. This gives us multiple restore points.</li>
+<li>This setup turned on content integrity check ("içerik kontrolü") so it verifies what it copied.</li>
+<li>This setup scheduled the job in HBS3 at 03:05 daily.</li>
+<li>Because HBS3 doesn't expose a simple official CLI like <code>hbs3cmd --run-job ...</code> on this specific firmware, it is possible to't trigger HBS3 directly from a shell script. So instead this setup scheduled HBS3 in the GUI and scheduled the up/down scripts separately in cron.</li>
+</ul>
+<p>Important note: By backing up the entire DockerData directory, this system is backing up BOTH:</p>
+<ul>
+<li>The live PGDATA (postgres18/)</li>
+<li>The WAL archive directory (postgres_archive/)</li>
+<li>The docker-compose.yml and scripts that describe how to spin Postgres back up</li>
+<li>The cron/autorun logic scripts</li>
+</ul>
+<p>That means after a disaster, it is possible to restore not just the data, but also the exact way this setup were running it, and even the logic that keeps it backed up. It's self-referential and that's good.</p>
+<h3>3.3 WAL archiving / PITR</h3>
+<p>Inside Postgres this setup changed configuration so that:</p>
+<ul>
+<li><code>archive_mode = 'on'</code></li>
+<li><code>archive_command = 'test ! -f /var/lib/postgresql/archive/%f &amp;&amp; cp %p /var/lib/postgresql/archive/%f'</code></li>
+<li><code>wal_compression = 'on'</code> (saves disk space in WAL segments)</li>
+<li><code>max_wal_size</code> tuned higher so this setup don't churn too fast (this setup set 2GB)</li>
+</ul>
+<p>What WAL archiving means in plain language:</p>
+<ul>
+<li>Postgres writes every change to WAL first. Think of WAL like a changelog / journal.</li>
+<li>This setup copy finished WAL segments into <code>postgres_archive/</code>.</li>
+<li>If the main data directory dies, it is possible to restore a previous base snapshot AND replay WAL up to a chosen moment in time (Point-In-Time Recovery).</li>
+</ul>
+<p>Additionally, checked <code>pg_stat_archiver</code> to confirm WAL segments were being archived (archived_count increasing) after fixing permissions on the archive directory inside the container (chown postgres:postgres).</p>
+<hr/>
+<h2>4. How This setup Scheduled Everything (Automation)</h2>
+<h3>4.1 Cron jobs</h3>
+<p>QNAP uses cron to run periodic tasks. This setup inspected <code>/etc/config/crontab</code> and saw many built-in jobs. This setup added the own lines for Postgres:</p>
+<pre>
+0 3 * * * /share/CACHEDEV1_DATA/DockerData/pg_down.sh
+0 4 * * * /share/CACHEDEV1_DATA/DockerData/pg_up.sh
+</pre>
+<p>Meaning:</p>
+<ul>
+<li>03:00 every day -&gt; run pg_down.sh to stop the Postgres container stack.</li>
+<li>04:00 every day -&gt; run pg_up.sh to bring it back up.</li>
+</ul>
+<p>This setup loaded these cron entries using <code>crontab</code> and restarted QNAP's cron daemon to apply them. Additionally, confirmed with <code>sudo crontab -l</code> that they were present.</p>
+<h3>4.2 HBS3 schedule</h3>
+<p>This setup scheduled the HBS3 sync job ("DockerDataSync") in the HBS3 GUI at 03:05 daily. This lands right after 03:00 shutdown, so by 03:05 the DB is offline and files are quiet.</p>
+<p>This gives us ~55 minutes (03:05 -&gt; 04:00) of backup window before pg_up.sh restarts the container at 04:00.</p>
+<h3>4.3 Making cron survive reboots / firmware updates</h3>
+<p>Some QNAP firmware updates or reboots can wipe or regenerate cron. This setup solved this with two pieces:</p>
+<ol>
+<li><b>/share/CACHEDEV1_DATA/DockerData/restore_cron.sh</b><br/>
+    This script:
+    <ul>
+<li>Checks if the cron lines for pg_down.sh and pg_up.sh are already in /etc/config/crontab.</li>
+<li>If missing, appends them back.</li>
+<li>Reloads cron (<code>/etc/init.d/crond.sh restart</code>).</li>
+<li>Logs a message (like "[restore_cron] Cron entries re-added.") into restore_cron.log with a timestamp.</li>
+</ul>
+</li>
+<li><b>/mnt/HDA_ROOT/.config/autorun.sh</b><br/>
+    QNAP runs this on every boot.<br/>
+    This setup created/edited it to contain:
+    <pre>
+#!/bin/bash
+/share/CACHEDEV1_DATA/DockerData/restore_cron.sh &gt;&gt; /share/CACHEDEV1_DATA/DockerData/restore_cron.log 2&gt;&amp;1
+    </pre>
+
+    So at boot:
+    <ul>
+<li>autorun.sh runs restore_cron.sh</li>
+<li>restore_cron.sh ensures the 03:00/03:05/04:00 maintenance pipeline still exists</li>
+<li>This provides a log entry so it is possible to verify it ran after any reboot</li>
+</ul>
+</li>
+</ol>
+<p>Additionally, backed up the config partition (the one mounted at /mnt/HDA_ROOT/.config) before editing autorun.sh, so it is possible to restore it if needed. That reduces the risk of damaging startup behavior.</p>
+<hr/>
+<h2>5. Recovery Instructions If Something Goes Wrong</h2>
+<p>This is the "break glass" section. Use this if Postgres won't start, or data looks corrupted, or the NAS volume got damaged and you need to rebuild.</p>
+<h3>5.1 Situation A: Postgres is corrupted or won't start, but DockerData is still mostly there</h3>
+<ol>
+<li>Stop the stack cleanly (if it's up at all):
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose down
+    </pre>
+</li>
+<li>Pick a good backup snapshot from HBS3.<br/>
+      In HBS3, go to the job ("DockerDataSync"), look at its version history. Choose the most recent version from before the corruption. Restore that version of DockerData into a new folder, for example:
+    <pre>
+/share/CACHEDEV1_DATA/DockerData/recovery
+    </pre>
+    After restore, you should have something like:
+    <ul>
+<li>recovery/postgres18/  (a copy of the PGDATA directory from that backup)</li>
+<li>recovery/postgres_archive/  (archived WAL files from that backup snapshot time)</li>
+</ul>
+</li>
+<li>(Optional but powerful) Point-In-Time Recovery (PITR):<br/>
+      If you want to restore to a specific moment before the corruption, create a recovery.signal file in the restored data directory telling Postgres how far to replay WAL:
+    <pre>
+cat &gt; /share/CACHEDEV1_DATA/DockerData/recovery/postgres18/docker/recovery.signal &lt;<eof <="" eof="" pre="" recovery_target_time="YYYY-MM-DD HH:MM:SS" restore_command="cp /var/lib/postgresql/archive/%f %p">
+    Where "recovery_target_time" is the timestamp you want to recover to, and it must be within the range covered by WAL files stored in recovery/postgres_archive.
+  </eof></pre></li>
+<li>Temporarily edit docker-compose.yml so that instead of mounting the live postgres18 and postgres_archive, it mounts the recovery copies. In other words, change the volumes for the Postgres service to:
+    <pre>
+- /share/CACHEDEV1_DATA/DockerData/recovery/postgres18:/var/lib/postgresql/18/docker
+- /share/CACHEDEV1_DATA/DockerData/recovery/postgres_archive:/var/lib/postgresql/archive
+    </pre>
+    Save docker-compose.yml.
+  </li>
+<li>Start Postgres on the recovered data:
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose up -d
+docker logs -f postgresContainer
+    </pre>
+
+    Watch logs. You're looking for:
+    <pre>database system is ready to accept connections</pre>
+
+    If you used PITR, Postgres will replay WAL from the archive until it reaches the requested recovery_target_time, then finish startup.
+  </li>
+<li>At this point, you are running on the recovered copy, not the damaged original. You can now verify data integrity, dump important data, etc.</li>
+</ol>
+<h3>5.2 Situation B: Total loss of DockerData (catastrophic)</h3>
+<p>This is if the original /share/CACHEDEV1_DATA/DockerData folder is trashed, or the NAS volume got messed up but you still have the HBS3 backup copy.</p>
+<ol>
+<li>Stop any running postgresContainer (if it even exists).
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml down || true
+    </pre>
+</li>
+<li>Use HBS3 "Restore" to fully restore the latest versioned snapshot of DockerData back into:
+    <pre>/share/CACHEDEV1_DATA/DockerData</pre>
+    This should restore:
+    <ul>
+<li>postgres18/ (the data directory)</li>
+<li>postgres_archive/ (WAL archive)</li>
+<li>postgres_compose/ (compose file)</li>
+<li>all scripts (pg_down.sh, pg_up.sh, restore_cron.sh, etc.)</li>
+</ul>
+</li>
+<li>Fix permissions on the WAL archive dir just in case:
+    <pre>
+docker exec -it postgresContainer bash -lc "chown -R postgres:postgres /var/lib/postgresql/archive"
+    </pre>
+    (If the container isn't up yet, you can start it first, see step below.)
+  </li>
+<li>Bring the stack back:
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose up -d
+    </pre>
+</li>
+<li>Check logs:
+    <pre>
+docker logs -f postgresContainer
+    </pre>
+    Again, you're looking for "database system is ready to accept connections".
+  </li>
+</ol>
+<h3>5.3 Situation C: Cron jobs disappeared after reboot / firmware update</h3>
+<p>If for some reason the 03:00 / 04:00 jobs stop running after an update, check:</p>
+<pre>
+cat /share/CACHEDEV1_DATA/DockerData/restore_cron.log
+</pre>
+<p>What should happen:</p>
+<ul>
+<li>QNAP boots.</li>
+<li>/mnt/HDA_ROOT/.config/autorun.sh runs automatically.</li>
+<li>autorun.sh calls restore_cron.sh from DockerData.</li>
+<li>restore_cron.sh re-injects the cron entries if needed and restarts the cron daemon, then logs what it did.</li>
+</ul>
+<p>If you see a line like:</p>
+<pre>[restore_cron] Cron entries re-added.</pre>
+<p>then you’re good — the backup window logic (03:00 down → 03:05 backup → 04:00 up) is still enforced automatically.</p>
+<hr/>
+<h2>6. Core Idea / Philosophy</h2>
+<p>The system this system was built is meant to solve these problems on a home/edge NAS setup:</p>
+<ul>
+<li>If the container dies or Postgres data corrupts: this setup has daily file-level snapshots and PITR WAL to roll back to a clean point.</li>
+<li>If the NAS reboots or firmware updates and wipes cron: autorun.sh + restore_cron.sh repair the maintenance schedule automatically with no human interaction.</li>
+<li>If the main Postgres data directory is damaged beyond repair: it is possible to restore the entire DockerData directory (which includes both the actual data and the docker-compose definition) and spin it back up exactly how it used to run.</li>
+<li>This system is not depending on mystery internal Docker volumes. This system is binding explicit host paths. That means even if Docker itself forgets about the container, the data is still just regular folders on disk and it is possible to re-run docker compose against them.</li>
+<li>This setup log actions (backup.log, restore_cron.log) so it is possible to prove to ourselves that the routines actually executed when this setup think they did.</li>
+</ul>
+<p>This gives us:</p>
+<ul>
+<li>Nightly snapshots with versioning (via HBS3).</li>
+<li>Point-in-time recovery (via WAL archiving).</li>
+<li>Automated downtime/uptime window around the backup so the snapshot is clean.</li>
+<li>Self-healing scheduling so cron jobs survive firmware updates.</li>
+</ul>
+<p>In other words: the NAS can basically blow up in the middle of the night, and it is still know:
+(1) where the data lives,
+(2) how to bring the container back,
+(3) how to roll forward WAL to a known good timestamp,
+(4) and how to re-establish the automatic backup cycle after reboot.</p>
+<hr/>
+<p><b>Last updated:</b> 2025-10-24<br/>
+<b>Owner:</b> Berkant A.<br/>
+<b>System:</b> QNAP NAS (QTS 5.x), Postgres 18 in Docker, WAL archiving enabled, HBS3 daily sync with versioning.</p>
+</body>
+</html>

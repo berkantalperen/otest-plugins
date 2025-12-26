@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>OTEST İç Yazılımlar</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f8f8f8;
+      color: #222;
+      margin: 40px;
+      line-height: 1.6;
+    }
+    h1 {
+      color: #003366;
+      border-bottom: 2px solid #003366;
+      padding-bottom: 6px;
+      margin-bottom: 20px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+      gap: 20px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+    .doc {
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .doc-title {
+      font-weight: bold;
+      color: #003366;
+      margin-bottom: 6px;
+      font-size: 17px;
+    }
+    .doc-meta {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 10px;
+    }
+    .actions a {
+      display: inline-block;
+      padding: 6px 10px;
+      border: 1px solid #003366;
+      border-radius: 4px;
+      color: #003366;
+      text-decoration: none;
+      font-size: 14px;
+      background: #eef3f9;
+    }
+    .actions a:hover {
+      background: #d9e4f5;
+    }
+  </style>
+</head>
+<body>
+
+<h1>OTEST A.Ş İç Yazılımlar</h1>
+
+<div class="grid">
+  <div class="doc">
+    <div class="doc-title">Signal Generator</div>
+    <div class="doc-meta" data-file="/internal-apps/tools/signal_generator/index.html">
+      📅 <b>Eklenme:</b> <span class="date">yükleniyor...</span>
+    </div>
+    <div class="actions">
+      <a href="/internal-apps/tools/signal_generator/">Uygulamayı Aç</a>
+    </div>
+  </div>
+
+  <div class="doc">
+    <div class="doc-title">Barcode Generator</div>
+    <div class="doc-meta" data-file="/internal-apps/tools/barcode_generator/index.html">
+      📅 <b>Eklenme:</b> <span class="date">yükleniyor...</span>
+    </div>
+    <div class="actions">
+      <a href="/internal-apps/tools/barcode_generator/">Uygulamayı Aç</a>
+    </div>
+  </div>
+
+  <div class="doc">
+    <div class="doc-title">Barcode Reader</div>
+    <div class="doc-meta" data-file="/internal-apps/tools/barcode_reader/index.html">
+      📅 <b>Eklenme:</b> <span class="date">yükleniyor...</span>
+    </div>
+    <div class="actions">
+      <a href="/internal-apps/tools/barcode_reader/">Uygulamayı Aç</a>
+    </div>
+  </div>
+
+  <div class="doc">
+    <div class="doc-title">HIC Calculator</div>
+    <div class="doc-meta" data-file="/internal-apps/tools/hic_calculator/index.html">
+      📅 <b>Eklenme:</b> <span class="date">yükleniyor...</span>
+    </div>
+    <div class="actions">
+      <a href="/internal-apps/tools/hic_calculator/">Uygulamayı Aç</a>
+    </div>
+  </div>
+
+  <div class="doc">
+    <div class="doc-title">NIJ (CK) Calculator</div>
+    <div class="doc-meta" data-file="/internal-apps/tools/nij_calculator/index.html">
+      📅 <b>Eklenme:</b> <span class="date">yükleniyor...</span>
+    </div>
+    <div class="actions">
+      <a href="/internal-apps/tools/nij_calculator/">Uygulamayı Aç</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Automatically get "date added" from file's HTTP Last-Modified header
+  document.querySelectorAll('.doc-meta').forEach(meta => {
+    const file = meta.getAttribute('data-file');
+    fetch(file, { method: 'HEAD' })
+      .then(res => {
+        const date = res.headers.get('Last-Modified') || res.headers.get('last-modified');
+        const span = meta.querySelector('.date');
+        if (!span) return;
+
+        if (date) {
+          span.textContent = new Date(date).toLocaleDateString('tr-TR', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric'
+          });
+        } else {
+          span.textContent = 'bilgi yok';
+        }
+      })
+      .catch(() => {
+        const span = meta.querySelector('.date');
+        if (span) span.textContent = 'bilgi yok';
+      });
+  });
+</script>
+
+</body>
+</html>

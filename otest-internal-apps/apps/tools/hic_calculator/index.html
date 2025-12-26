@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>3 Dosyadan Veri Analizi — HIC (Resultant)</title>
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header>
+    <h1>Head Injury Criterion (HIC) Calculator</h1>
+  </header>
+
+  <div class="container">
+    <section class="panel">
+      <h2>Girdi</h2>
+      <label for="fileInput">Sensör Çıktı Dosyalarını Seçin (Fx, Fy, Fz)</label>
+      <input id="fileInput" type="file" multiple accept="*/*" />
+      <div class="stats" id="fileList" style="margin-top:10px;"></div>
+
+      <!-- trims row -->
+      <div class="row3" style="margin-top:8px;">
+        <div>
+          <label for="trimMs">Başlangıcı Kes (ms)</label>
+          <input id="trimMs" type="number" step="1" value="214" />
+        </div>
+        <div>
+          <label for="trimEndMs">Sonu Kes (ms)</label>
+          <input id="trimEndMs" type="number" step="1" value="0" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <!-- placeholder to keep spacing aligned on wide screens -->
+          <div></div>
+        </div>
+      </div>
+
+      <!-- filter + load row (filter BEFORE the button) -->
+      <div class="row3" style="margin-top:8px; grid-template-columns: 1fr 1fr auto;">
+        <div>
+          <label for="filterOption">Filtre (CFC)</label>
+          <select id="filterOption" class="combo">
+            <option value="none">Yok (filtreleme)</option>
+            <option value="cfc60">CFC60</option>
+            <option value="cfc180">CFC180</option>
+            <option value="cfc600">CFC600</option>
+            <option value="cfc1000" selected>CFC1000</option>
+          </select>
+        </div>
+        <div></div>
+        <div>
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="btnLoad">Yükle & Çiz</button>
+        </div>
+      </div>
+
+      <!-- tools row -->
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <button class="btn btn-inline" id="btnReset">Temizle</button>
+        <button class="btn btn-inline" id="btnResetZoom">Zoom Sıfırla</button>
+        <button class="btn btn-inline" id="btnDownload">Matris İndir (TSV)</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <!-- Numeric selection -->
+      <div class="row">
+        <div>
+          <label for="selStartMs">Seçim Başlangıcı (ms)</label>
+          <input id="selStartMs" type="number" step="0.1" placeholder="örn. 15.0" />
+        </div>
+        <div>
+          <label for="selEndMs">Seçim Sonu (ms)</label>
+          <input id="selEndMs" type="number" step="0.1" placeholder="örn. 25.0" />
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+        <button class="btn btn-inline" id="btnApplyRange">Aralığı Uygula</button>
+        <button class="btn btn-inline" id="btnClearSel">Seçimi Temizle</button>
+      </div>
+
+      <!-- separated auto-HIC section with label and divider -->
+      <div class="sep" style="margin-top:12px;"></div>
+      <div class="muted" style="margin-bottom:6px; font-weight:600;">Otomatik HIC Aralığı Bulma</div>
+      <div style="display:flex; gap:8px; margin-top:4px; flex-wrap:wrap;">
+        <button class="btn btn-inline" id="btnSuggestMax" title="Tüm aralıkta maksimum HIC">HIC</button>
+        <button class="btn btn-inline" id="btnSuggest15" title="Δt ≤ 15 ms içinde maksimum HIC">HIC15</button>
+        <button class="btn btn-inline" id="btnSuggest36" title="Δt ≤ 36 ms içinde maksimum HIC">HIC36</button>
+      </div>
+
+      <div class="sep"></div>
+      <div class="stats" id="selStats"></div>
+
+      <p class="muted">
+        Notlar: Başlangıçta <b>Başlangıcı Kes</b> ve sonda <b>Sonu Kes</b> kadar veri atılır; zaman ekseni <b>0</b>’a
+        kaydırılır.
+        Slash format (21 satır) ivmeleri <b>m/s² → g</b> dönüştürülerek çizilir. Seçtiğiniz CFC filtresi (veya filtre
+        yok) hesaplama öncesinde uygulanır.
+      </p>
+    </section>
+
+    <section class="panel">
+      <div class="charts">
+        <div class="chart-box">
+          <h2>Veri — Zaman Grafiği</h2>
+          <canvas id="chart"></canvas>
+        </div>
+
+        <details class="meta" id="metaDetails">
+          <summary>Üstbilgi Tablosu — tıklayıp açın</summary>
+          <div class="meta-wrap">
+            <table class="meta" id="metaTable">
+              <thead>
+                <tr>
+                  <th>Değişken</th>
+                  <th id="col1">Data 1</th>
+                  <th id="col2">Data 2</th>
+                  <th id="col3">Data 3</th>
+                </tr>
+              </thead>
+              <tbody id="metaBody"></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+
+</html>

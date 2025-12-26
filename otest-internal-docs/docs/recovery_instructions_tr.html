@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>PostgreSQL Yedekleme ve Kurtarma Kılavuzu (QNAP / Docker / WAL / HBS3)</title>
+  <style>
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    color: #222;
+    background-color: #f8f8f8;
+    margin: 40px;
+  }
+
+  h1, h2, h3 {
+    color: #003366;
+  }
+
+  h1 {
+    border-bottom: 2px solid #003366;
+    padding-bottom: 5px;
+  }
+
+  h2 {
+    margin-top: 30px;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4px;
+  }
+
+  pre {
+    background-color: #eee;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+  }
+
+  ul, ol {
+    margin-left: 25px;
+  }
+
+  li {
+    margin-bottom: 5px;
+  }
+
+  p {
+    margin: 12px 0;
+  }
+
+  hr {
+    border: none;
+    border-top: 1px solid #ccc;
+    margin: 30px 0;
+  }
+
+  code {
+    background-color: #f2f2f2;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  b {
+    color: #000;
+  }
+  </style>
+</head>
+<body>
+
+<h1>PostgreSQL Yedekleme ve Kurtarma Kılavuzu</h1>
+<p>
+Ortam: QNAP NAS (QTS 5.2.x, ARM64, Docker/Container Station), tek bir Postgres container'ı (postgres:18).<br>
+Amaç: Disk bozulması veya container hatası durumunda sistemin ayakta kalması, belirli bir ana geri dönebilme (PITR - Point-In-Time Recovery) ve insan müdahalesi olmadan her gece tutarlı yedeklerin alınması.
+</p>
+
+<hr>
+
+<h2>1. Dizin Yapısı ve Hangi Veri Nerede</h2>
+
+<p>Tüm kritik veriler ve betikler NAS dosya sisteminde şu ana dizin altında tutuluyor:</p>
+
+<pre>/share/CACHEDEV1_DATA/DockerData/</pre>
+
+<p>Bu dizin altında şunlar bulunuyor:</p>
+
+<ul>
+  <li><b>postgres18/</b><br>
+    Bu dizin (veya container içine bind-mount edilen karşılığı) çalışan Postgres veri dizinidir.<br>
+    Container şu yolu kullanacak şekilde ayarlanmıştır:
+    <pre>/var/lib/postgresql/18/docker</pre>
+    ve bu yol NAS tarafında şu dizine bağlıdır:
+    <pre>/share/CACHEDEV1_DATA/DockerData/postgres18</pre>
+    Postgres tablo, indeks, katalog vb. gerçek veritabanı dosyalarını burada saklar. Bu dizin bozulursa Postgres açılmaz veya veriler tutarsız olur.
+  </li>
+
+  <li><b>postgres_archive/</b><br>
+    Arşivlenmiş WAL (Write-Ahead Log) segmentlerinin kopyalandığı yerdir.<br>
+    Container içinde Postgres şu ayarlarla çalışır:
+    <pre>
+archive_mode = on
+archive_command = 'test ! -f /var/lib/postgresql/archive/%f && cp %p /var/lib/postgresql/archive/%f'
+wal_compression = on
+    </pre>
+    ve şu eşleme yapılmıştır:
+    <pre>/share/CACHEDEV1_DATA/DockerData/postgres_archive -> /var/lib/postgresql/archive</pre>
+    Her 16 MB'lık WAL segmenti tamamlandığında Postgres bu segmenti bu arşiv dizinine kopyalar. Bu WAL dosyaları Zaman Noktasına Kadar Kurtarma (PITR) sağlar; yani sadece son snapshot'a değil, bozulmadan hemen önceki belirli bir ana geri dönmek mümkündür. Bunun için o ana kadar olan WAL segmentlerinin elde olması gerekir.
+  </li>
+
+  <li><b>postgres_backups/</b><br>
+    Manuel tam taban yedekleri (pg_basebackup tarzı) için ayrılmış klasördür. Şu anda ana mekanizma değildir, fakat gerektiğinde tam kopyalar bu klasöre alınabilir.
+  </li>
+
+  <li><b>postgres_compose/</b><br>
+    Bu klasör Postgres'i isimli bir container olarak çalıştırmak için kullanılan Docker Compose yapılandırmasını içerir. Örneğin içinde şu dosya vardır:
+    <pre>docker-compose.yml</pre>
+    Hizmet şu şekilde tanımlanır:
+    <pre>
+    container_name: postgresContainer
+    image: postgres:18
+    ports:
+      - "32786:5432"
+    environment:
+      POSTGRES_PASSWORD=...
+      PGDATA=/var/lib/postgresql/18/docker
+    volumes:
+      - /share/CACHEDEV1_DATA/DockerData/postgres18:/var/lib/postgresql/18/docker
+      - /share/CACHEDEV1_DATA/DockerData/postgres_archive:/var/lib/postgresql/archive
+    restart: unless-stopped
+    healthcheck: pg_isready
+    </pre>
+
+    Önemli noktalar:
+    <ul>
+      <li>Container kritik veriler için Docker'ın anonim/geçici volumelerini kullanmaz. Gerçek NAS yolları bind-mount edilir. Bu yüzden veriler Docker'ın içinde kaybolmaz; NAS üzerinde normal klasörler olarak durur.</li>
+      <li>Postgres NAS üzerinde 32786 portundan erişilebilir hale getirilir.</li>
+      <li>PGDATA, container içinde <code>/var/lib/postgresql/18/docker</code> olarak sabitlenmiştir ve NAS'taki <code>/share/CACHEDEV1_DATA/DockerData/postgres18</code> klasörüne bağlanır. Bu, Postgres 18 yapılandırmasına uygundur.</li>
+      <li><code>postgres_archive</code> klasörü de container içine mount edilmiştir, böylece WAL arşivleme bu klasöre yazabilir.</li>
+    </ul>
+  </li>
+
+  <li><b>backup.log</b><br>
+    Yedekleme sırasında stack'in kapatılıp tekrar açıldığı anların zaman damgası burada tutulur. Postgres'in ne zaman durdurulduğu ve yeniden başlatıldığı izlenebilir.
+  </li>
+
+  <li><b>restore_cron.log</b><br>
+    restore_cron.sh tarafından boot sırasında yazılan günlük dosyasıdır. Yeniden başlatma veya firmware güncellemesinden sonra gecelik yedek akışındaki cron görevlerinin geri yüklendiğini doğrulamaya yarar.
+  </li>
+
+  <li><b>pg_down.sh</b><br>
+    Yedekten önce Postgres container stack'ini temiz şekilde durduran betik.<br>
+    Temel olarak şunu çalıştırır:
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml down
+    </pre>
+    ve backup.log içine zaman damgası yazar.
+  </li>
+
+  <li><b>pg_up.sh</b><br>
+    Yedekten sonra Postgres container stack'ini tekrar ayağa kaldıran betik.<br>
+    Şunu çalıştırır:
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml up -d
+    </pre>
+    ve backup.log içine zaman damgası yazar.
+  </li>
+
+  <li><b>restore_cron.sh</b><br>
+    Boot sırasında çalışan ve cron görevlerinin (gecelik durdurma / başlatma zamanlaması) gerçekten tanımlı olduğundan emin olan betik.<br>
+    Gerekirse cron girdilerini yeniden ekler, cron'u yeniden başlatır ve yaptığı işlemi restore_cron.log içine zaman damgalı olarak yazar.
+  </li>
+</ul>
+
+<p>DockerData dışında ama yine kritik olan:</p>
+
+<ul>
+  <li><b>/mnt/HDA_ROOT/.config/autorun.sh</b><br>
+    Bu dosya QNAP'in kalıcı sistem yapılandırma alanında bulunur. QNAP boot sırasında bu betiği otomatik olarak çalıştırır.<br>
+    İçeriği aşağıdaki gibidir:
+    <pre>
+#!/bin/bash
+/share/CACHEDEV1_DATA/DockerData/restore_cron.sh >> /share/CACHEDEV1_DATA/DockerData/restore_cron.log 2>&1
+    </pre>
+    Yani her boot'ta QNAP restore_cron.sh'i çağırır; restore_cron.sh cron girdilerinin firmware güncellemesi veya yeniden başlatma sonrası silinmiş olsa bile tekrar eklendiğini garanti eder.
+  </li>
+</ul>
+
+<hr>
+
+<h2>2. Container Nasıl Çalıştırılıyor (Çalışma Düzeni)</h2>
+
+<p>Postgres 18 Docker içinde bir compose dosyasıyla çalıştırılır. Container adı:</p>
+<pre>postgresContainer</pre>
+
+<p>Çalışma sırasında kritik noktalar:</p>
+
+<ul>
+  <li>Image: postgres:18 (cihaz ARM64/aarch64 olduğundan uyumlu build).</li>
+  <li>POSTGRES_PASSWORD container başlatılırken environment variable olarak verilir.</li>
+  <li>PGDATA, container içinde <code>/var/lib/postgresql/18/docker</code> olarak ayarlanmıştır ve bu yol NAS üzerindeki <code>/share/CACHEDEV1_DATA/DockerData/postgres18</code> klasörüne bind-mount edilmiştir. Yani veritabanı dosyaları DockerData/postgres18 klasöründe tutulur, container'ın geçici katmanında değil.</li>
+  <li>WAL arşiv dizini de DockerData/postgres_archive klasöründen container içindeki <code>/var/lib/postgresql/archive</code> yoluna mount edilir.</li>
+  <li>healthcheck olarak <code>pg_isready</code> kullanılır; böylece Docker Postgres'in bağlantı kabul edip etmediğini bilir.</li>
+  <li><code>restart: unless-stopped</code> ayarı sayesinde container kasıtlı olarak durdurulmadıkça yeniden ayağa kalkar.</li>
+</ul>
+
+<p>Ağ (networking):</p>
+<ul>
+  <li>Container 5432/tcp portunu NAS üzerinde 32786 portuna map'ler. İstemciler NAS'a 32786 portundan bağlanır.</li>
+  <li>docker inspect çıktısı container'ın Docker ağı içinde 172.29.0.x benzeri bir IP'den erişilebilir olduğunu gösterir; dışarıdan erişim için ise 32786 portu kullanılır.</li>
+</ul>
+
+<hr>
+
+<h2>3. Yedekleme Sistemi Nasıl Kuruldu</h2>
+
+<p>Yedekleme tasarımı iki ana hedefi sağlar:</p>
+
+<ol>
+  <li>HBS3 ile her gün kritik her şeyin (veri dizini, WAL arşivi, docker-compose yapılandırması, betikler) sürümlü tam dosya kopyaları.</li>
+  <li>WAL arşivleme sayesinde Zaman Noktasına Kadar Kurtarma (PITR).</li>
+</ol>
+
+<h3>3.1 Gecelik yedek akışı (üst seviye)</h3>
+
+<ol>
+  <li>Her gün 03:00'te: cron <code>pg_down.sh</code> betiğini çalıştırır ve Postgres temiz şekilde durdurulur. Böylece dosyalar kopyalama sırasında değişmez.</li>
+  <li>03:05'te: HBS3 görevi ("DockerDataSync") çalışır. <code>/share/CACHEDEV1_DATA/DockerData</code> dizininin tamamını <code>/share/CACHEDEV1_DATA/DockerDataBackups/.../</code> altına kopyalar ve sürümlü geçmiş tutar.</li>
+  <li>04:00'te: cron <code>pg_up.sh</code> betiğini çalıştırır ve Postgres tekrar başlatılır.</li>
+</ol>
+
+<p>Bu sayede her gece çakışmasız (crash-consistent) bir anlık görüntü elde edilir çünkü veritabanı kopya alınmadan önce kapatılmış olur.</p>
+
+<h3>3.2 HBS3 görevinin ayrıntıları</h3>
+
+<ul>
+  <li>HBS3 görevi tek yönlü bir senkronizasyon (NAS → NAS klasörü). Kaynak: <code>/share/CACHEDEV1_DATA/DockerData</code>. Hedef: <code>/share/CACHEDEV1_DATA/DockerDataBackups/&lt;JobName&gt;</code>.</li>
+  <li>Sürüm yönetimi ("sürüm yönetimi") etkindir; her çalıştırma önceki kopyaların üstüne yazmak yerine geçmiş versiyonları tutar. Böylece geriye dönüp eski bir güne ait sürümü seçmek mümkündür.</li>
+  <li>İçerik bütünlüğü kontrolü ("içerik kontrolü") açıktır; kopyalanan dosyalar doğrulanır.</li>
+  <li>Görev HBS3 arayüzünde her gün 03:05'e planlanmıştır.</li>
+  <li>Bu firmware sürümünde HBS3 tarafında resmi bir komut satırı (örneğin <code>hbs3cmd --run-job ...</code>) bulunmadığı için görev doğrudan bir shell betiğinden tetiklenmemektedir. Bunun yerine HBS3 kendi planlamasını yapar; pg_down.sh / pg_up.sh ise cron tarafından zamanlanır.</li>
+</ul>
+
+<p>Önemli not: <code>/share/CACHEDEV1_DATA/DockerData</code> dizininin tamamı yedeklendiği için aşağıdakiler de korunur:</p>
+<ul>
+  <li>Canlı PGDATA (<code>postgres18/</code>)</li>
+  <li>WAL arşiv klasörü (<code>postgres_archive/</code>)</li>
+  <li>docker-compose.yml ve Postgres'in tam olarak nasıl ayağa kaldırıldığını tanımlayan yapılandırma</li>
+  <li>cron / autorun mantığını içeren betikler</li>
+</ul>
+
+<p>Bu sayede bir felaket sonrası yalnızca veri değil, aynı zamanda hizmeti tekrar ayağa kaldırma yöntemi ve otomatik yedek döngüsünü sürdüren mantık da geri yüklenebilir. Yani sistem kendi kendini tarif eden şekilde yedeklenir.</p>
+
+<h3>3.3 WAL arşivleme / PITR</h3>
+
+<p>Postgres içinde yapılandırma şu şekilde değiştirilmiştir:</p>
+
+<ul>
+  <li><code>archive_mode = 'on'</code></li>
+  <li><code>archive_command = 'test ! -f /var/lib/postgresql/archive/%f && cp %p /var/lib/postgresql/archive/%f'</code></li>
+  <li><code>wal_compression = 'on'</code> (WAL segmentlerinin disk boyutunu düşürür)</li>
+  <li><code>max_wal_size</code> daha yüksek bir değere (2GB) ayarlanmıştır ki çok hızlı döngü olmasın.</li>
+</ul>
+
+<p>WAL arşivlemenin sade açıklaması:</p>
+<ul>
+  <li>Postgres her değişikliği önce WAL'e yazar. WAL bir değişiklik günlüğü gibidir.</li>
+  <li>Tamamlanan WAL segmentleri <code>postgres_archive/</code> içine kopyalanır.</li>
+  <li>Ana veri dizini çökerse, önceki bir temel snapshot geri yüklendikten sonra WAL yeniden oynatılarak (replay) belirli bir ana kadar ilerlemek mümkündür (PITR).</li>
+</ul>
+
+<p><code>pg_stat_archiver</code> izlendiğinde (özellikle <code>archived_count</code> sayısının artıp artmadığına bakılarak) WAL segmentlerinin gerçekten arşivlendiği doğrulanmıştır. Bunun için container içindeki arşiv klasörünün sahiplik izinleri <code>postgres:postgres</code> olacak şekilde düzeltilmiştir (<code>chown</code>).</p>
+
+<hr>
+
+<h2>4. Zamanlama ve Otomasyon</h2>
+
+<h3>4.1 Cron işleri</h3>
+
+<p>QNAP periyodik görevleri çalıştırmak için cron kullanır. <code>/etc/config/crontab</code> incelendiğinde birçok dahili iş görülebilir. Postgres için şu satırlar eklendi:</p>
+
+<pre>
+0 3 * * * /share/CACHEDEV1_DATA/DockerData/pg_down.sh
+0 4 * * * /share/CACHEDEV1_DATA/DockerData/pg_up.sh
+</pre>
+
+<p>Anlamı:</p>
+<ul>
+  <li>Her gün 03:00 → pg_down.sh çağrılır ve Postgres container stack'i durdurulur.</li>
+  <li>Her gün 04:00 → pg_up.sh çağrılır ve Postgres tekrar ayağa kaldırılır.</li>
+</ul>
+
+<p>Bu cron girdileri <code>crontab</code> kullanılarak yüklendi ve QNAP'ın cron daemon'u yeniden başlatıldı. <code>sudo crontab -l</code> çıktısı ile girdilerin gerçekten mevcut olduğu kontrol edildi.</p>
+
+<h3>4.2 HBS3 zamanlaması</h3>
+
+<p>HBS3 içindeki "DockerDataSync" senkronizasyon görevi her gün 03:05'e planlanmıştır. Bu, 03:00'teki kapatmadan hemen sonradır; dolayısıyla 03:05 itibarıyla veritabanı kapalıdır ve dosyalar sabit durumdadır.</p>
+
+<p>Bu, 03:05 → 04:00 arasında yaklaşık 55 dakikalık bir yedekleme penceresi sağlar. 04:00'te pg_up.sh Postgres'i tekrar başlatır.</p>
+
+<h3>4.3 Cron'un reboot / firmware güncellemesinden sonra da yaşaması</h3>
+
+<p>Bazı QNAP firmware güncellemeleri veya yeniden başlatmalar cron yapılandırmasını silebilir ya da sıfırlayabilir. Bunu kalıcı kılmak için iki parça kullanılmıştır:</p>
+
+<ol>
+  <li><b>/share/CACHEDEV1_DATA/DockerData/restore_cron.sh</b><br>
+    Bu betik:<br>
+    <ul>
+      <li><code>/etc/config/crontab</code> içinde pg_down.sh ve pg_up.sh satırlarının var olup olmadığını kontrol eder.</li>
+      <li>Eğer eksikse bu satırları tekrar ekler.</li>
+      <li><code>/etc/init.d/crond.sh restart</code> komutuyla cron daemon'unu yeniden başlatır.</li>
+      <li>Zaman damgalı bir mesajı restore_cron.log içine yazar (örneğin "[restore_cron] Cron entries re-added.").</li>
+    </ul>
+  </li>
+
+  <li><b>/mnt/HDA_ROOT/.config/autorun.sh</b><br>
+    QNAP bu dosyayı her boot'ta otomatik olarak çalıştırır.<br>
+    İçeriği şudur:
+    <pre>
+#!/bin/bash
+/share/CACHEDEV1_DATA/DockerData/restore_cron.sh >> /share/CACHEDEV1_DATA/DockerData/restore_cron.log 2>&1
+    </pre>
+
+    Boot sırasında sırasıyla:<br>
+    <ul>
+      <li>autorun.sh restore_cron.sh'i çağırır,</li>
+      <li>restore_cron.sh cron girdilerini yeniden enjekte eder ve cron daemon'unu yeniden başlatır,</li>
+      <li>restore_cron.sh yapılan işlemi ve zaman damgasını restore_cron.log içine yazar.</li>
+    </ul>
+  </li>
+</ol>
+
+<p>autorun.sh düzenlenmeden önce bu yapılandırma bölümü (/mnt/HDA_ROOT/.config altında bağlanan bölüm) ayrıca yedeklenmiştir. Böylece başlangıç davranışı zarar görmeden geri alınabilir.</p>
+
+<hr>
+
+<h2>5. Bir Şeyler Bozulursa Kurtarma Adımları</h2>
+
+<p>Bu bölüm acil durum içindir. Postgres başlamıyorsa, veri bozuk görünüyorsa veya NAS hacmi zarar gördüyse aşağıdaki adımlar uygulanır.</p>
+
+<h3>5.1 Durum A: Postgres bozuk veya başlamıyor ama DockerData büyük ölçüde duruyor</h3>
+
+<ol>
+  <li>Stack'i temiz şekilde durdur:
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose down
+    </pre>
+  </li>
+
+  <li>HBS3'ten uygun bir yedek sürüm seç.<br>
+      HBS3 arayüzünde "DockerDataSync" görevinin sürüm geçmişine bakılır. Bozulmadan hemen önceki sürüm seçilir. Bu DockerData sürümü yeni bir klasöre geri yüklenir, örneğin:
+    <pre>
+/share/CACHEDEV1_DATA/DockerData/recovery
+    </pre>
+    Geri yüklemeden sonra aşağıdakiler oluşmalıdır:
+    <ul>
+      <li>recovery/postgres18/  (o yedeğe ait PGDATA kopyası)</li>
+      <li>recovery/postgres_archive/  (o yedeğe ait arşivlenmiş WAL dosyaları)</li>
+    </ul>
+  </li>
+
+  <li>(İsteğe bağlı fakat güçlü) Zaman Noktasına Kadar Kurtarma (PITR):<br>
+      Bozulmadan önceki belirli bir ana dönmek isteniyorsa, geri yüklenen veri dizininde Postgres'e WAL'i nereye kadar oynatması gerektiğini söyleyen bir <code>recovery.signal</code> dosyası oluşturulabilir:
+    <pre>
+cat > /share/CACHEDEV1_DATA/DockerData/recovery/postgres18/docker/recovery.signal <<EOF
+restore_command = 'cp /var/lib/postgresql/archive/%f %p'
+recovery_target_time = 'YYYY-MM-DD HH:MM:SS'
+EOF
+    </pre>
+    Buradaki <code>recovery_target_time</code> istenen zaman damgasıdır ve bu zamanın kapsadığı WAL segmentlerinin recovery/postgres_archive içinde mevcut olması gerekir.
+  </li>
+
+  <li>docker-compose.yml dosyası geçici olarak düzenlenir. Canlı <code>postgres18</code> ve <code>postgres_archive</code> mount'ları yerine, <code>recovery</code> altındaki kopyalar mount edilir. Yani Postgres servisi için volume tanımları şu şekilde değiştirilir:
+    <pre>
+- /share/CACHEDEV1_DATA/DockerData/recovery/postgres18:/var/lib/postgresql/18/docker
+- /share/CACHEDEV1_DATA/DockerData/recovery/postgres_archive:/var/lib/postgresql/archive
+    </pre>
+    Dosya kaydedilir.
+  </li>
+
+  <li>Kurtarılan verilerle Postgres başlatılır:
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose up -d
+docker logs -f postgresContainer
+    </pre>
+
+    Günlükler izlenir. Aşağıdaki satır aranır:
+    <pre>database system is ready to accept connections</pre>
+
+    PITR kullanıldıysa Postgres arşivden WAL'i belirtilen <code>recovery_target_time</code> anına kadar oynatır, sonra normal açılışa geçer.
+  </li>
+
+  <li>Bu noktada çalışan sistem bozuk orijinal dizin değil, kurtarılmış kopyadır. Veri bütünlüğü kontrol edilebilir, önemli tablolar dışa aktarılabilir vb.</li>
+</ol>
+
+<h3>5.2 Durum B: DockerData tamamen kayıp (felaket senaryosu)</h3>
+
+<p>Bu senaryo, orijinal <code>/share/CACHEDEV1_DATA/DockerData</code> klasörü çökmüşse veya NAS hacmi zarar görmüşse fakat HBS3 yedeği hâlâ mevcutsa kullanılır.</p>
+
+<ol>
+  <li>Varsa çalışan postgresContainer durdurulur:
+    <pre>
+docker compose -f /share/CACHEDEV1_DATA/DockerData/postgres_compose/docker-compose.yml down || true
+    </pre>
+  </li>
+
+  <li>HBS3 "Restore" özelliği ile DockerData'nın en güncel sürümlü yedeği tamamen geri yüklenir:
+    <pre>/share/CACHEDEV1_DATA/DockerData</pre>
+    Bu işlem sonucunda geri gelmesi gerekenler:
+    <ul>
+      <li>postgres18/ (veri dizini)</li>
+      <li>postgres_archive/ (WAL arşivi)</li>
+      <li>postgres_compose/ (compose dosyası)</li>
+      <li>betikler (pg_down.sh, pg_up.sh, restore_cron.sh vb.)</li>
+    </ul>
+  </li>
+
+  <li>Gerekirse WAL arşiv klasörünün izinleri düzeltilir:
+    <pre>
+docker exec -it postgresContainer bash -lc "chown -R postgres:postgres /var/lib/postgresql/archive"
+    </pre>
+    (Container henüz ayakta değilse, önce başlatılabilir; bkz. bir sonraki adım.)
+  </li>
+
+  <li>Stack tekrar ayağa kaldırılır:
+    <pre>
+cd /share/CACHEDEV1_DATA/DockerData/postgres_compose
+docker compose up -d
+    </pre>
+  </li>
+
+  <li>Günlükler kontrol edilir:
+    <pre>
+docker logs -f postgresContainer
+    </pre>
+    Tekrar şu satır beklenir:
+    <pre>database system is ready to accept connections</pre>
+  </li>
+</ol>
+
+<h3>5.3 Durum C: Reboot / firmware güncellemesi sonrası cron işleri silinmiş</h3>
+
+<p>Eğer 03:00 / 04:00 görevleri bir güncellemeden sonra artık çalışmıyorsa şu dosya kontrol edilir:</p>
+
+<pre>
+cat /share/CACHEDEV1_DATA/DockerData/restore_cron.log
+</pre>
+
+<p>Beklenen akış şudur:</p>
+<ul>
+  <li>QNAP boot eder.</li>
+  <li><code>/mnt/HDA_ROOT/.config/autorun.sh</code> otomatik olarak çalıştırılır.</li>
+  <li>autorun.sh <code>restore_cron.sh</code>'i çağırır.</li>
+  <li>restore_cron.sh cron girdilerini tekrar ekler ve cron daemon'unu yeniden başlatır.</li>
+  <li>restore_cron.sh yaptığı işlemi zaman damgası ile birlikte restore_cron.log içine yazar.</li>
+</ul>
+
+<p>restore_cron.log içinde şu tür bir satır görülüyorsa:</p>
+
+<pre>[restore_cron] Cron entries re-added.</pre>
+
+<p>yedekleme penceresi mantığı (03:00 kapat → 03:05 yedek → 04:00 aç) hâlâ otomatik olarak uygulanıyor demektir.</p>
+
+<hr>
+
+<h2>6. Temel Fikir / Yaklaşım</h2>
+
+<p>Kurulan sistem, ev tipi / edge NAS kurulumunda şu problemleri çözmeyi hedefler:</p>
+
+<ul>
+  <li>Container çökerse veya Postgres verisi bozulursa: günlük dosya seviyesinde snapshot'lar ve WAL sayesinde temiz bir ana geri dönülebilir.</li>
+  <li>NAS yeniden başlasa ya da firmware güncellemesi cron'u sıfırlasa bile: autorun.sh + restore_cron.sh bakım zamanlamasını otomatik olarak tekrar kurar.</li>
+  <li>Ana Postgres veri dizini onarılamaz durumdaysa: tüm DockerData dizini (hem gerçek veri hem de docker-compose tanımı) geri yüklenebilir ve sistem eskisi gibi ayağa kaldırılabilir.</li>
+  <li>Bağımlılık yalnızca Docker'ın "gizli" internal volumelerine bırakılmaz. Önemli dizinler açıkça host path olarak bağlanır. Yani Docker container tanımı unutulsa bile veriler NAS üzerinde normal klasörler olarak durur ve docker compose tekrar çalıştırılarak servis ayağa kalkabilir.</li>
+  <li>backup.log ve restore_cron.log gibi günlükler bakım penceresinin gerçekten çalışıp çalışmadığını kanıtlamaya yardımcı olur.</li>
+</ul>
+
+<p>Bu yapı şunları sağlar:</p>
+<ul>
+  <li>HBS3 ile gecelik sürümlü snapshot'lar,</li>
+  <li>WAL arşivleme ile zaman noktasına kadar kurtarma,</li>
+  <li>Yedekleme penceresi boyunca veritabanının kontrollü olarak kapatılıp açılması,</li>
+  <li>Firmware güncellemesinden sonra bile cron zamanlamasının otomatik olarak kendini onarması.</li>
+</ul>
+
+<p>Başka bir deyişle: NAS gece ortasında bile tamamen çökmüş olsa, yine de<br>
+(1) verinin nerede tutulduğu bilinmektedir,<br>
+(2) container'ın nasıl tekrar ayağa kaldırılacağı bellidir,<br>
+(3) WAL yeniden oynatılarak bilinen temiz bir zamana kadar geri gitmek mümkündür,<br>
+(4) otomatik yedek döngüsünü yeniden devreye almak için gereken cron mantığı da geri yüklenebilir.
+</p>
+
+<hr>
+
+<p><b>Son güncelleme:</b> 2025-10-24<br>
+<b>Sorumlu:</b> Berkant A.<br>
+<b>Sistem:</b> QNAP NAS (QTS 5.x), Docker içinde Postgres 18, WAL arşivleme açık, HBS3 ile günlük sürümlü senkronizasyon.
+</p>
+
+</body>
+</html>

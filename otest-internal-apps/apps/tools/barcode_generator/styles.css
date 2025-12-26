@@ -1,0 +1,81 @@
+  :root {
+    --bg:#0b1020; --card:#121935; --muted:#9fb0ff; --text:#e7ecff;
+    --accent:#4f66ff; --ok:#1fb86a; --border:#243170; --input:#0f1740; --drop:#0e173d;
+    --hover:#22306b; --active:#2a3aa0;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text)}
+  header{padding:18px 20px;text-align: center; border-bottom:1px solid #263058;background:#0e1530;position:sticky;top:0;z-index:2}
+  h1{margin:0;font-size:20px}
+  .wrap{max-width:1100px;margin:25px auto;padding:20px;display:grid;gap:16px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 8px 24px #0006}
+  .card h2{margin:0;padding:12px 14px;border-bottom:1px solid var(--border);font-size:16px;color:var(--muted)}
+  .card .content{padding:14px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+
+  /* ---------- Form grid (12 kolon) ---------- */
+  .form-grid{display:grid;grid-template-columns: repeat(12, 1fr);gap:12px}
+  .field{min-width:0}
+  .span-2{grid-column: span 2}
+  .span-3{grid-column: span 3}
+  .span-4{grid-column: span 4}
+  .span-6{grid-column: span 6}
+
+  /* Inputs */
+  input, select{width:100%}
+  input{padding:10px 12px;border-radius:10px;border:1px solid #31408a;background:var(--input);color:var(--text)}
+  input::placeholder{color:#90a0ff80}
+
+  /* Çıktılar düzeni */
+  .outputs{display:grid;grid-template-columns: repeat(2, minmax(0,1fr));gap:16px}
+  .outcard{background:transparent;border:0;padding:0}
+  .outlabel{color:var(--muted);margin-bottom:6px}
+  .out{cursor:pointer; display:inline-block;
+       font:600 18px/1.2 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+       letter-spacing:.5px;background:#0c1333;border:1px dashed #32439d;color:#d9e1ff;
+       padding:10px 12px;border-radius:12px;user-select:all}
+  .barcode-box{margin-top:10px;border:1px dashed #33439a; border-radius:10px; padding:8px; background:#0b1333}
+  /* Barkod SVG’leri tıklanabilir */
+  #genelBarcode, #testBarcode { cursor:pointer; display:block; max-width:100% }
+
+  .small{font-size:12px}
+
+  /* Toast bildirimi */
+  .toast{position:fixed;top:20px;right:20px;background:#2d40d8;color:#fff;padding:8px 14px;border-radius:8px;opacity:0;transform:translateY(-10px);transition:opacity .3s, transform .3s;z-index:1000;pointer-events:none}
+  .toast.show{opacity:1;transform:translateY(0)}
+
+  /* ---- Choices.js koyu tema ---- */
+  .choices{margin-bottom:0}
+  .choices__inner{background:var(--input);color:var(--text);border:1px solid #31408a;border-radius:10px;min-height:42px;padding:8px 10px}
+  .choices.is-focused .choices__inner{box-shadow:0 0 0 2px #4f66ff40}
+  .choices__list--single .choices__item{color:var(--text)}
+  .choices__placeholder{opacity:.6;color:#9fb0ff}
+  .choices__list--dropdown, .choices__list--dropdown * {background:var(--drop) !important;color:var(--text) !important}
+  .choices__list--dropdown .is-highlighted {background:var(--hover) !important;color:#fff !important}
+  .choices[data-type*="select-one"]::after{border-color:#9fb0ff transparent transparent; right:12px}
+  .choices[data-type*="select-one"].is-open::after{border-color:transparent transparent #9fb0ff}
+
+  /* Responsive */
+  @media (max-width: 920px){
+    .form-grid{grid-template-columns: repeat(6, 1fr)}
+    .span-6{grid-column: span 6}
+    .span-4{grid-column: span 6}
+    .span-3{grid-column: span 3}
+    .span-2{grid-column: span 3}
+    .outputs{grid-template-columns: 1fr}
+  }
+  @media (max-width: 560px){
+    .form-grid{grid-template-columns: repeat(2, 1fr)}
+    .span-6,.span-4,.span-3,.span-2{grid-column: span 2}
+  }
+  footer{
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  color: #9fb0ff;
+  background: #0b1020;   /* arka planı body ile uyumlu */
+  padding: 6px 0;
+  }

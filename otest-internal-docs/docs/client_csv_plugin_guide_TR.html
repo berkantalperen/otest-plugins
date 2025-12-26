@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Client CSV Plugin – PostgreSQL → WordPress Otomatik CSV Aktarımı Kılavuzu</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      color: #222;
+      background-color: #f8f8f8;
+      margin: 40px;
+    }
+    h1, h2, h3 {
+      color: #003366;
+    }
+    h1 {
+      border-bottom: 2px solid #003366;
+      padding-bottom: 5px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      margin-top: 30px;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 4px;
+    }
+    h3 {
+      margin-top: 20px;
+    }
+    pre {
+      background-color: #eee;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    ul, ol {
+      margin-left: 25px;
+    }
+    li {
+      margin-bottom: 5px;
+    }
+    p {
+      margin: 12px 0;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #ccc;
+      margin: 30px 0;
+    }
+    code {
+      background-color: #f2f2f2;
+      padding: 2px 4px;
+      border-radius: 3px;
+    }
+    b {
+      color: #000;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Client CSV Plugin – PostgreSQL → WordPress Otomatik CSV Aktarımı Kılavuzu</h1>
+
+<p>
+Bu doküman, <b>PostgreSQL veritabanındaki client_* görünümlerinden CSV üretip otest.com.tr WordPress sitesine otomatik olarak yükleyen</b>
+Docker tabanlı sistemin mimarisini ve <b>operasyonel bakım adımlarını</b> anlatır.
+</p>
+
+<hr>
+
+<h2>0. Hızlı Özet</h2>
+
+<ul>
+  <li>PostgreSQL ve CSV uploader aynı <b>docker-compose.yml</b> içinde çalışır.</li>
+  <li>CSV uploader servisi: <b>client_csv_plugin</b>, container adı: <b>csvUploaderContainer</b>.</li>
+  <li>Image, <code>/share/CACHEDEV1_DATA/DockerData/client_csv_plugin/Dockerfile</code> ile NAS üzerinde build edilir.</li>
+  <li>Container içinde cron, her <b>5 dakikada bir</b> <code>/app/run_uploader.sh</code> script'ini çalıştırır.</li>
+  <li><code>upload_csvs_to_wp.py</code>, Postgres’teki <code>client_%</code> görünümlerini tek tek okuyup
+      <code>client_xxx.csv</code> olarak WordPress REST endpoint’ine POST eder.</li>
+  <li>Tüm çıktılar ve hatalar NAS üzerinde:
+    <br><code>/share/CACHEDEV1_DATA/DockerData/logs/client_csv_plugin.log</code> içine yazılır.</li>
+</ul>
+
+<hr>
+
+<h2>1. Dizin Yapısı ve Önemli Dosyalar</h2>
+
+<p>Tüm ilgili dosyalar NAS üzerinde şu ana dizin altındadır:</p>
+
+<pre>/share/CACHEDEV1_DATA/DockerData/</pre>
+
+<ul>
+  <li><b>docker_compose/</b>
+    <ul>
+      <li><code>docker-compose.yml</code><br>
+        <b>Services:</b>
+        <ul>
+          <li><b>postgres</b> – Image: <code>postgres:18</code>, container: <code>postgresContainer</code>,
+              port: NAS üzerinde <code>32786 → 5432</code>.</li>
+          <li><b>client_csv_plugin</b> – Build context: <code>../client_csv_plugin</code>,
+              container: <code>csvUploaderContainer</code>,
+              log volume: <code>/share/CACHEDEV1_DATA/DockerData/logs/client_csv_plugin.log:/var/log/client_csv_plugin.log</code>,
+              <code>env_file: .env</code>.</li>
+        </ul>
+      </li>
+      <li><code>.env</code><br>
+        Postgres ve WordPress bağlantı bilgileri burada tanımlıdır:
+        <pre># Timezone
+TZ=Europe/Istanbul
+
+# DB (service name "postgres" resolves inside the Compose network)
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=...
+DB_USER=postgres
+DB_PASSWORD=********
+
+# WordPress REST endpoint + auth
+WP_URL=https://otest.com.tr/wp-json/musteri/v1/upload
+WP_USER=...
+WP_APP_PASSWORD=******** ******** ******** ********</pre>
+        Bu dosya <b>gizli</b> kabul edilir ve kaynak kontrolüne alınmaz.
+      </li>
+    </ul>
+  </li>
+
+  <li><b>client_csv_plugin/</b>
+    <ul>
+      <li><code>Dockerfile</code><br>
+        Debian tabanlı hafif bir imaj üzerine Python, <code>cron</code> ve <code>moreutils</code> (ts) kurulur;
+        <code>entrypoint.sh</code>, <code>run_uploader.sh</code> ve <code>upload_csvs_to_wp.py</code> <code>/app</code> altına kopyalanır
+        ve <b>entrypoint</b> olarak <code>entrypoint.sh</code> atanır.
+      </li>
+      <li><code>entrypoint.sh</code><br>
+        <ul>
+          <li><code>TZ</code> değişkenine göre timezone ayarlar.</li>
+          <li>Ortam değişkenlerini <code>/app/cron_env.sh</code> dosyasına yazar (cron için).</li>
+          <li>Cron job oluşturur:
+            <pre>*/5 * * * * root /app/run_uploader.sh</pre>
+          </li>
+          <li><code>/var/log/client_csv_plugin.log</code> dosyasını oluşturur.</li>
+          <li><code>cron</code> servisini başlatır ve log dosyasını <code>tail -F</code> ile takip eder.</li>
+        </ul>
+      </li>
+      <li><code>run_uploader.sh</code><br>
+        <ul>
+          <li><code>cron_env.sh</code>’i <code>source</code> eder (TZ, DB_*, WP_* değişkenleri).</li>
+          <li>Her çalıştığında log’a bilgi satırı yazar:
+            <pre>[ 2025-11-07 17:30:01 ] [INFO] Running uploader with DB_HOST=postgres, DB_PORT=5432</pre>
+          </li>
+          <li>Eğer <code>DB_PASSWORD</code> veya <code>WP_APP_PASSWORD</code> boşsa <b>FATAL</b> yazar ve çıkar.</li>
+          <li><code>/app/upload_csvs_to_wp.py</code> script’ini çalıştırır ve çıktısını timestamp’li olarak log’a ekler.</li>
+        </ul>
+      </li>
+      <li><code>upload_csvs_to_wp.py</code><br>
+        <ul>
+          <li>Postgres’e bağlanmak için <code>DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD</code> değişkenlerini kullanır.</li>
+          <li><code>public</code> şemasında adı <code>client_%</code> ile başlayan tüm <b>view</b> isimlerini listeler.</li>
+          <li>Her view için:
+            <ul>
+              <li><code>SELECT * FROM "view_name"</code> ile veriyi çeker.</li>
+              <li>Veriyi CSV metnine çevirir (ilk satır başlıklar).</li>
+              <li>Dosya adı olarak <code>view_name + ".csv"</code> kullanır (örn. <code>client_tci.csv</code>).</li>
+              <li>CSV metnini WordPress’e <code>WP_URL</code> endpoint’ine POST eder (Basic Auth: <code>WP_USER + WP_APP_PASSWORD</code>).</li>
+            </ul>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+
+  <li><b>logs/</b>
+    <ul>
+      <li><code>client_csv_plugin.log</code> – Tüm cron çağrıları, bilgi mesajları, Python uyarıları ve hatalar bu dosyaya düşer.</li>
+    </ul>
+  </li>
+
+  <li><b>WordPress eklentisi</b>
+    <ul>
+      <li><code>musteri-tablo.php</code> – otest.com.tr WordPress kurulumu üzerinde bir eklentidir.
+        REST endpoint’ten gelen CSV içeriğini alır, ilgili klasöre yazar ve frontend’de blok/shortcode ile gösterir.
+      </li>
+    </ul>
+  </li>
+</ul>
+
+<hr>
+
+<h2>2. Çalışma Akışı</h2>
+
+<ol>
+  <li>Container ayağa kalktığında <code>entrypoint.sh</code> timezone’u ayarlar, <code>cron_env.sh</code> dosyasını üretir ve cron job’u kaydeder.</li>
+  <li>Cron her 5 dakikada bir <code>/app/run_uploader.sh</code> script’ini çalıştırır.</li>
+  <li><code>run_uploader.sh</code>, veritabanı ve WordPress kimlik bilgilerini kontrol ettikten sonra
+      <code>upload_csvs_to_wp.py</code>’yi çağırır.</li>
+  <li><code>upload_csvs_to_wp.py</code> Postgres’teki tüm <code>client_%</code> görünümlerini tarar ve her biri için
+      WordPress’e bir CSV upload isteği gönderir.</li>
+  <li>WordPress eklentisi CSV’yi alır ve müşterinin erişebileceği tabloda kullanmak üzere saklar.</li>
+</ol>
+
+<p>Sistem sağlıklı çalışıyorsa log dosyasında her 5 dakikada bir şu pattern görülmelidir:</p>
+
+<pre>[ YYYY-MM-DD HH:MM:SS ] [INFO] Running uploader with DB_HOST=postgres, DB_PORT=5432
+[YYYY-MM-DD HH:MM:SS] [INFO] Using DB_HOST=postgres DB_PORT=5432
+[YYYY-MM-DD HH:MM:SS] [OK] client_tci.csv uploaded successfully</pre>
+
+<hr>
+
+<h3>2.5 Mimari Tasarım Gerekçeleri</h3>
+<p>Bu küçük sistem, uzun vadede bakımı kolay ve güvenli olsun diye birkaç önemli tasarım kararıyla oluşturuldu:</p>
+<ul>
+  <li><b>Aynı docker-compose içinde iki servis (postgres + client_csv_plugin)</b><br>
+      Bu sayede:
+      <ul>
+        <li>İki container otomatik olarak aynı Docker ağına alınır ve uploader, veritabanına
+            <code>DB_HOST=postgres</code> diyerek bağlanabilir (IP ezberleme / sabitleme yok).</li>
+        <li>NAS üzerindeki backup döngüsü (<code>pg_down.sh</code> / <code>pg_up.sh</code>) tek bir
+            <code>docker-compose.yml</code> yığını yönetir; hem veritabanı hem uploader senkron şekilde
+            duran/başlayan bir “stack” gibi davranır.</li>
+        <li>Yapılandırma dosyaları (Dockerfile, entrypoint, scriptler) tek bir proje dizininde tutulduğu için
+            taşıma ve yedekleme daha basittir.</li>
+      </ul>
+  </li>
+  <li><b>Cron’u container içinde çalıştırmak</b><br>
+      NAS’ın <code>crontab</code>’ine ekstra giriş eklemek yerine zamanlama mantığını tamamen container içine
+      taşıdık. Böylece:
+      <ul>
+        <li>Bu görevi başka bir sunucuya taşımak istersen sadece aynı image’ı ve compose dosyasını götürmen yeterli.</li>
+        <li>Backup sırasında container’lar zaten durdurulup tekrar başlatılıyor; cron da bununla birlikte doğal
+            olarak durup kalkıyor, ekstra senkronizasyon ihtiyacı yok.</li>
+      </ul>
+  </li>
+  <li><b>.env dosyası tek doğruluk kaynağı</b><br>
+      Veritabanı host, port, isim ve WordPress endpoint bilgileri gibi ayarları tek bir
+      <code>.env</code> dosyasına topladık. Böylece:
+      <ul>
+        <li>Şifreler veya hassas bilgiler image’ın içine “pişmiyor”; sadece çalışma zamanında container’a enjekte ediliyor.</li>
+        <li>Ortam değiştiğinde (örneğin WP domain’i değişirse) sadece <code>.env</code> dosyasını güncellemek yeterli.</li>
+      </ul>
+  </li>
+  <li><b>client_% view’leri ve client_… rol isimleri</b><br>
+      PostgreSQL tarafında tüm müşteri view’leri <code>client_*</code> pattern’iyle tutuluyor ve WordPress tarafında
+      roller de <code>client_*</code> şeklinde isimlendiriliyor. Bu sayede:
+      <ul>
+        <li>Yeni müşteri eklemek, sadece yeni bir <code>client_xxx</code> view’i yaratmak ve WP’de aynı isimde rol
+            açmakla sınırlı kalıyor (kod tarafında ekstra mapping yazmaya gerek yok).</li>
+        <li>Uploader, veritabanında hangi view’ların olduğunu otomatik keşfediyor ve hepsini tek tek CSV olarak
+            upload ediyor.</li>
+      </ul>
+  </li>
+</ul>
+
+<p>Kısaca: <b>docker-compose ile aynı ağ</b>, <b>cron’un container içinde çalışması</b> ve <b>.env üzerinden yapılandırma</b>
+sayesinde sistem taşınabilir, okunabilir ve bakım maliyeti düşük bir hale getirildi.</p>
+<hr>
+<h2>3. Günlük Kontroller (Sağlık Durumu)</h2>
+
+<h3>3.1 Container durumu</h3>
+
+<p>NAS shell üzerinden:</p>
+
+<pre>cd /share/CACHEDEV1_DATA/DockerData/docker_co
+
+mpose
+docker compose ps</pre>
+
+<p>Beklenen durum:</p>
+<ul>
+  <li><code>postgresContainer</code> – <b>running</b></li>
+  <li><code>csvUploaderContainer</code> – <b>running</b></li>
+</ul>
+
+<p>Kısa log görmek için:</p>
+
+<pre>docker logs --tail 50 csvUploaderContainer</pre>
+
+<h3>3.2 Log dosyasını kontrol etmek</h3>
+
+<pre>tail -n 50 /share/CACHEDEV1_DATA/DockerData/logs/client_csv_plugin.log</pre>
+
+<p>Hata yoksa ağırlıkla <code>[INFO]</code> ve <code>[OK]</code> satırları görülür.
+Sürekli tekrarlayan <code>[FATAL]</code> veya <code>[ERROR]</code> satırları varsa bkz. Sorun Giderme.</p>
+
+<hr>
+
+<h2>4. Container'ı Yeniden Build Etmek / Değişiklik Sonrası Deploy</h2>
+
+<p>Bu adımlar, aşağıdaki durumlarda kullanılır:</p>
+
+<ul>
+  <li><code>upload_csvs_to_wp.py</code> içinde değişiklik yaptığında,</li>
+  <li><code>run_uploader.sh</code> veya <code>entrypoint.sh</code>’i değiştirdiğinde,</li>
+  <li><code>Dockerfile</code> üzerinde yeni bir dependency eklediğinde,</li>
+  <li>Image bozulduğunu düşündüğünde.</li>
+</ul>
+
+<ol>
+  <li>NAS’a SSH ile bağlan ve compose klasörüne gir:
+    <pre>cd /share/CACHEDEV1_DATA/DockerData/docker_compose</pre>
+  </li>
+
+  <li>Servisleri temizce durdur:
+    <pre>docker compose down</pre>
+    Bu komut hem <code>postgresContainer</code> hem <code>csvUploaderContainer</code>’ı durdurur.
+  </li>
+
+  <li>CSV uploader imajını yeniden build et (isteğe bağlı olarak sadece ilgili servisi):
+    <pre>docker compose build client_csv_plugin</pre>
+    veya tek adımda build + up:
+    <pre>docker compose up -d --build client_csv_plugin</pre>
+  </li>
+
+  <li>Postgres’in de kalktığından emin olmak için (eğer down ettiysen):
+    <pre>docker compose up -d postgres</pre>
+    ya da tüm stack’i tekrar ayağa kaldırmak için:
+    <pre>docker compose up -d</pre>
+  </li>
+
+  <li>Durumu doğrula:
+    <pre>docker compose ps
+docker logs --tail 50 csvUploaderContainer</pre>
+  </li>
+</ol>
+
+<hr>
+
+<h2>5. Yapılandırma Değişiklikleri (.env, yeni endpoint vs.)</h2>
+
+<p>DB veya WordPress bağlantı bilgilerini değiştirmek için:</p>
+
+<ol>
+  <li>Container’ları durdur:
+    <pre>cd /share/CACHEDEV1_DATA/DockerData/docker_compose
+docker compose down</pre>
+  </li>
+
+  <li><code>.env</code> dosyasını düzenle (örneğin yeni veritabanı adı, yeni WP_URL veya yeni WP_APP_PASSWORD):</li>
+
+  <li>Tekrar ayağa kaldır:
+    <pre>docker compose up -d</pre>
+  </li>
+
+  <li>İlk çalışmayı log’dan kontrol et:
+    <pre>tail -n 50 /share/CACHEDEV1_DATA/DockerData/logs/client_csv_plugin.log</pre>
+    Eğer kimlik bilgileri yanlışsa burada <code>[ERROR]</code> veya HTTP 401/403 hataları görülecektir.
+  </li>
+</ol>
+
+<hr>
+
+<h2>6. Yeni Müşteri / Yeni View Ekleme</h2>
+
+<p>Sisteme yeni bir müşteri verisi eklemek için:</p>
+
+<ol>
+  <li>Postgres tarafında <code>public</code> şemasında adı <b><code>client_</code> ile başlayan</b> bir view oluştur.
+    Örnek: <code>client_yenimusteri</code>.</li>
+  <li>View adı ne ise WordPress tarafında beklenen CSV dosyası da <code>client_yenimusteri.csv</code> olacaktır.
+    (Plugin bu adı kullanarak ilgili tabloyu gösterir.)</li>
+  <li>View’i ekledikten sonra sistemi zorlamaya gerek yoktur; cron 5 dakika içinde yeni view’i görüp CSV göndermeye başlayacaktır.</li>
+  <li>Test için container içinde uploader’ı manuel çalıştırabilirsin:
+    <pre>docker exec -it csvUploaderContainer /bin/bash
+/app/run_uploader.sh</pre>
+  </li>
+</ol>
+
+<p><b>Önemli:</b> view adını sonradan değiştirirsen, WordPress tarafında beklenen CSV adı da değişmiş olur.
+Eklentinin bu yeni adı kullandığından emin ol veya eski adıyla ikinci bir view oluştur.</p>
+
+<hr>
+
+<h2>7. Sorun Giderme</h2>
+
+<h3>7.1 Log’da FATAL: Missing DB_PASSWORD veya WP_APP_PASSWORD</h3>
+
+<p><b>Belirti:</b> Log’da:</p>
+<pre>[YYYY-MM-DD HH:MM:SS] [FATAL] Missing DB_PASSWORD or WP_APP_PASSWORD; aborting.</pre>
+
+<p><b>Neden:</b> <code>.env</code> dosyasında ilgili değişken boş ya da entrypoint cron_env.sh’e yazamamış.</p>
+
+<p><b>Çözüm:</b></p>
+<ol>
+  <li><code>.env</code> dosyasını aç ve <code>DB_PASSWORD</code> ile <code>WP_APP_PASSWORD</code> satırlarının dolu olduğundan emin ol.</li>
+  <li>Container’ı yeniden başlat (bkz. Bölüm 4 – yeniden build etmek zorunlu değil, <code>docker compose up -d</code> yeterli).</li>
+</ol>
+
+<h3>7.2 HTTP 401/403 veya 404 Hataları</h3>
+
+<p><b>Belirti:</b> Log’da WordPress’e POST isteği sonrası HTTP 4xx hataları.</p>
+
+<p><b>Çözüm:</b></p>
+<ul>
+  <li><code>WP_URL</code> değerinin WordPress tarafındaki REST endpoint ile birebir aynı olduğundan emin ol
+      (örn. <code>/wp-json/musteri/v1/upload</code>).</li>
+  <li><code>WP_USER</code> ve <code>WP_APP_PASSWORD</code> değerlerinin WordPress’te oluşturulmuş bir Application Password ile uyuştuğunu kontrol et.</li>
+  <li>WordPress eklentisinin etkin olduğundan emin ol (Plugins ekranı).</li>
+</ul>
+
+<h3>7.3 Sürekli pandas / DBAPI2 Uyarıları</h3>
+
+<p><b>Belirti:</b> Log’da <code>UserWarning: ... please consider using SQLAlchemy</code> uyarısı.</p>
+
+<p><b>Not:</b> Bu uyarı işlevsel bir hata değildir; pandas, psycopg2 ile kullanılınca bunu öneri olarak yazmaktadır.
+Sistem CSV üretmeye ve yüklemeye devam ediyorsa görmezden gelinebilir.</p>
+
+<h3>7.4 CSV Görünmüyor ama Log OK</h3>
+
+<ul>
+  <li>WordPress media / özel klasörde dosyanın gerçekten yazıldığını kontrol et (eklenti konfigürasyonuna bağlı).</li>
+  <li>Frontend’de doğru müşteri/shortcode/blok kullanıldığından emin ol.</li>
+  <li>Yeni bir view eklediysen, adının <code>client_</code> ile başladığını ve WordPress kodunda bu adı kullandığını kontrol et.</li>
+</ul>
+
+<hr>
+
+<h2>8. Referans – Özet Tablo</h2>
+
+<ul>
+  <li><b>Compose klasörü:</b> <code>/share/CACHEDEV1_DATA/DockerData/docker_compose</code></li>
+  <li><b>Uploader service adı:</b> <code>client_csv_plugin</code></li>
+  <li><b>Uploader container adı:</b> <code>csvUploaderContainer</code></li>
+  <li><b>Postgres container adı:</b> <code>postgresContainer</code></li>
+  <li><b>Log dosyası (host):</b> <code>/share/CACHEDEV1_DATA/DockerData/logs/client_csv_plugin.log</code></li>
+  <li><b>Cron periyodu:</b> her 5 dakika (<code>*/5 * * * * root /app/run_uploader.sh</code>)</li>
+  <li><b>WordPress REST endpoint:</b> <code>WP_URL</code> (örn. <code>https://otest.com.tr/wp-json/musteri/v1/upload</code>)</li>
+  <li><b>Yeni müşteri view adı formatı:</b> <code>client_XXXXX</code> → CSV adı: <code>client_XXXXX.csv</code></li>
+</ul>
+
+<hr>
+
+<p><b>Son güncelleme:</b> 2025-11-10<br>
+<b>Sorumlu:</b> Berkant A.<br>
+<b>Sistem:</b> QNAP NAS (Docker/Container Station), PostgreSQL 18, WordPress (otest.com.tr), client_csv_plugin Docker servisi.</p>
+
+</body>
+</html>

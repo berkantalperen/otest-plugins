@@ -1,0 +1,42 @@
+<!--
+Author: Berkant Alperen
+Organization: OTEST A.Ş.
+Date: 20.08.2025
+-->
+<!doctype html>
+<html lang="tr">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Barkod Çözümleyici (Tersine)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header>
+    <h1>Barkod Kod Çözümleyici</h1>
+  </header>
+  <main>
+    <section class="card">
+      <h2>Girdi</h2>
+      <div class="content">
+        <label for="code" class="small">10 veya 18 haneli kodu yapıştırın</label>
+        <input id="code" placeholder="Örn: 25***A001*... (boşluksuz)" autofocus />
+        <div id="status" class="small" style="margin-top:8px"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Çözümlenen Alanlar</h2>
+      <div class="content">
+        <div class="grid" id="out"></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+
+</body>
+
+</html>

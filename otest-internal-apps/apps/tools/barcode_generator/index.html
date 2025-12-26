@@ -1,0 +1,123 @@
+<!--
+Author: Berkant Alperen
+Organization: OTEST A.Ş.
+Date: 20.08.2025
+-->
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>İş Emri Barkod Oluşturucu</title>
+
+  <!-- Choices.js CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@11.1.0/public/assets/styles/choices.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header><h1>İş Emri Barkod Oluşturucu</h1></header>
+
+<main class="wrap">
+  <section class="card">
+    <h2>Form</h2>
+    <div class="content">
+      <div class="form-grid">
+        <div class="field span-2">
+          <label for="yil">Yıl</label>
+          <select id="yil" name="yil"></select>
+        </div>
+
+        <div class="field span-4">
+          <label for="proje">Proje</label>
+          <select id="proje" name="proje"></select>
+        </div>
+
+        <div class="field span-3">
+          <label for="musteri">Müşteri</label>
+          <select id="musteri" name="musteri"></select>
+        </div>
+
+        <div class="field span-3">
+          <label for="gelis">İşin Geliş</label>
+          <select id="gelis" name="gelis"></select>
+        </div>
+
+        <div class="field span-6">
+          <label for="direktif">Yönetmelik/Direktif</label>
+          <select id="direktif" name="direktif"></select>
+        </div>
+
+        <div class="field span-3">
+          <label for="duzenek">Test Düzeneği</label>
+          <select id="duzenek" name="duzenek"></select>
+        </div>
+
+        <div class="field span-3">
+          <label for="uygulama">Test Uygulama</label>
+          <select id="uygulama" name="uygulama"></select>
+        </div>
+
+        <div class="field span-2">
+          <label for="detay">Detay Kodu</label>
+          <!-- input yerine select -->
+          <select id="detay" name="detay"></select>
+        </div>
+
+        <div class="field span-2">
+          <label for="tekrar">Tekrar No</label>
+          <select id="tekrar" name="tekrar"></select>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Çıktılar</h2>
+    <div class="content">
+      <div class="outputs">
+        <!-- Genel -->
+        <div class="outcard">
+          <div class="outlabel">Genel İş Emri Kodu</div>
+          <div id="genel" class="out" aria-live="polite"></div>
+          <div class="barcode-box">
+            <svg id="genelBarcode" title="Tıkla ve indir (PNG)"></svg>
+          </div>
+        </div>
+
+        <!-- Test -->
+        <div class="outcard">
+          <div class="outlabel">Test İş Emri Kodu</div>
+          <div id="test" class="out" aria-live="polite"></div>
+          <div class="barcode-box">
+            <svg id="testBarcode" title="Tıkla ve indir (PNG)"></svg>
+          </div>
+        </div>
+      </div>
+
+      <div id="barcodeStatus" class="small muted" role="status" aria-live="polite" style="margin-top:8px"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Nasıl çalışır?</h2>
+    <div class="content small">
+      <p>Barkod üretim metotu 10D06024 nolu dokümanda detaylıca açıklanmıştır.</p>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<footer>
+© OTEST A.Ş. — Author: Berkant Alperen — 20.08.2025
+</footer>
+
+<!-- JsBarcode -->
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<!-- Choices.js JS -->
+<script src="https://cdn.jsdelivr.net/npm/choices.js@11.1.0/public/assets/scripts/choices.min.js"></script>
+<script type="module" src="./main.js">
+</script>
+</body>
+</html>
