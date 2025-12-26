@@ -3,7 +3,7 @@
  * Plugin Name: Musteri Tablo Goruntuleyici
  * Description: Automatically detects 'client_*.csv' files matching user roles and displays them in a full-width DataTable.
  * Version: 3.12.0
- * Author: OTEST
+ * Author: Berkant Alperen
  * Text Domain: musteri-tablo
  */
 

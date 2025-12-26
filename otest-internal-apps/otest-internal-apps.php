@@ -3,7 +3,7 @@
  * Plugin Name: OTEST Internal Apps
  * Description: Serves internal static tools from a protected /internal-apps/ URL.
  * Version: 1.2.0
- * Author: OTEST
+ * Author: Berkant Alperen
  * Text Domain: otest-internal-apps
  */
 

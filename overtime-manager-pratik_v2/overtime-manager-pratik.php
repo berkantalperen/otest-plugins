@@ -3,7 +3,7 @@
  * Plugin Name: Overtime Manager (Pratik v3.5.0)
  * Description: Ücret Geçmişi (valid_from) + Haftalık toplamlar kaldırıldı (sadece aylık toplam kalır). Manager payroll hesabı ay/yıla göre doğru ücreti kullanır.
  * Version: 0.4.0
- * Author: ChatGPT
+ * Author: Çağatay Koçoğlu
  */
 
 // WordPress güvenlik önlemi: Eklenti dosyası doğrudan çağrılırsa

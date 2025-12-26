@@ -3,7 +3,7 @@
  * Plugin Name: OTEST Internal Docs
  * Description: Secure gateway for internal documentation under this plugin's /docs directory, restricted by user role.
  * Version: 1.5.0
- * Author: OTEST
+ * Author: Berkant Alperen
  * Text Domain: otest-internal-docs
  */
 

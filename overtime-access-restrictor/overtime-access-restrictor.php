@@ -3,7 +3,7 @@
 Plugin Name: Overtime Access Restrictor
 Description: Manager rollerinin Overtime sayfasına erişimini engeller.
 Version: 1.0
-Author: [Senin adın]
+Author: Çağatay Koçoğlu
 */
 
 // Manager'ları Overtime sayfasından engelle
